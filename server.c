@@ -23,6 +23,7 @@
 
 #include "networks.h"
 #include "safeUtil.h"
+#include "pdulib.h"
 
 #define MAXBUF 1024
 #define DEBUG_FLAG 1
@@ -60,7 +61,8 @@ void recvFromClient(int clientSocket)
 	int messageLen = 0;
 	
 	//now get the data from the client_socket
-	if ((messageLen = safeRecv(clientSocket, dataBuffer, MAXBUF, 0)) < 0)
+	// if ((messageLen = safeRecv(clientSocket, dataBuffer, MAXBUF, 0)) < 0)
+	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAXBUF)) < 0)	// Test my recvPDU
 	{
 		perror("recv call");
 		exit(-1);
