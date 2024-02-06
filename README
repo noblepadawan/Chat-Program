@@ -1,0 +1,13 @@
+Kieran Valino
+CPE 464-01 (12:10PM - 3:00PM Lab)
+
+Program 2 - Chat
+
+Build:
+  - $ make
+
+Server Run:
+  - $ ./server [port-number]
+
+Chat Client Run:
+  - $ ./cclient <handle-name> <host-name> <port-number>

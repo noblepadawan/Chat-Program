@@ -1,40 +1,20 @@
 /******************************************************************************
-* myServer.c
+* server.c
 * 
 * Writen by Prof. Smith, updated Jan 2023
-* Use at your own risk.  
+* Modified by Kieran Valino
 *
 *****************************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/uio.h>
-#include <sys/time.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
-#include <strings.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <stdint.h>
+#include "server.h"
 
-#include "networks.h"
-#include "safeUtil.h"
-#include "pdulib.h"
+// Globals
+HandleTable handleTable;
 
-#define MAXBUF 1024
-#define DEBUG_FLAG 1
-
-void recvFromClient(int clientSocket);
-int checkArgs(int argc, char *argv[]);
 
 int main(int argc, char *argv[])
 {
 	int mainServerSocket = 0;   //socket descriptor for the server socket
-	int clientSocket = 0;   //socket descriptor for the client socket
 	int portNumber = 0;
 	
 	portNumber = checkArgs(argc, argv);
@@ -42,39 +22,194 @@ int main(int argc, char *argv[])
 	//create the server socket
 	mainServerSocket = tcpServerSetup(portNumber);
 
-	// wait for client to connect
-	clientSocket = tcpAccept(mainServerSocket, DEBUG_FLAG);
+	//initialize the handle table
+	initializeHandleTable(&handleTable);
 
-	recvFromClient(clientSocket);
-	
-	/* close the sockets */
-	close(clientSocket);
+	//server control loop
+	serverControl(mainServerSocket);
+
+	//close the main server socket
 	close(mainServerSocket);
 
-	
 	return 0;
 }
 
-void recvFromClient(int clientSocket)
+void addNewSocket(int socket)
 {
-	uint8_t dataBuffer[MAXBUF];
-	int messageLen = 0;
+	int clientSocket = tcpAccept(socket, DEBUG_FLAG);
+	addToPollSet(clientSocket);
+}
+
+void processNewClient(int clientSocket, uint8_t *dataBuffer)
+{
+	// Add new client to handle table
+	char handle[MAX_HANDLER] = {0};
+	int handleLen = dataBuffer[0];
+	strncpy(handle, (char *)dataBuffer + 1, handleLen);
+	handle[handleLen] = '\0';
+
+	if (addHandle(&handleTable, clientSocket, handle) < 0)
+	{
+		// Handle already in use
+		char errorMessage[MAX_INPUT] = {0};
+		sprintf(errorMessage, "Handle already in use: %s", handle); 
+		sendPDU(clientSocket, (uint8_t *)errorMessage, MAX_INPUT, CONNECT_ERR);
+		
+		// Close connection
+		removeFromPollSet(clientSocket);
+		close(clientSocket);
+
+	} else {
+		// Handle added
+		sendPDU(clientSocket, NULL, 0, CONNECT_ACK);
+	}
+}
+
+void processBroadcast(int clientSocket, uint8_t *dataBuffer, int messageLen)
+{
+	// Send message to all clients except the sender
+	for (int i = 0; i < handleTable.size; i++)
+	{
+		if (handleTable.entries[i].socket != clientSocket)
+		{
+			sendPDU(handleTable.entries[i].socket, dataBuffer, messageLen, BROADCAST);
+		}
+	}
+}
+
+void processDirectMessage(int clientSocket, uint8_t *dataBuffer, int messageLen)
+{
+	// Send message to specific client or multiple clients
+	// Format: senderHandleLength + senderHandle + numOfDestinations + destinationHandleLength + destinationHandle + message
+
+	char destHandle[MAX_HANDLER];
+	int destHandleLen;
+	int offset = 2 + dataBuffer[0];
+
+	destHandleLen = dataBuffer[offset];
+	offset++;
+	memcpy(destHandle, dataBuffer + offset, destHandleLen);
+	destHandle[destHandleLen] = '\0';
+
+	// Find the socket associtated with the destination handle
+	int destSocket = getSocketByHandle(&handleTable, destHandle);
+	if (destSocket == -1)
+	{
+		// Handle not found
+		char error[MAX_INPUT] = {0};
+		error[0] = strlen(destHandle);	// Length of handle
+		sprintf(error + 1, "Client with handle %s does not exist", destHandle);	// Error message
+		sendPDU(clientSocket, (uint8_t *)error, MAX_INPUT, ERROR);
+	} else {
+		// Handle found
+		sendPDU(destSocket, dataBuffer, messageLen, MESSAGE);
+	}
+}
+
+void processList(int clientSocket)
+{
+	// Get the number of handles
+	uint32_t numHandles = handleTable.size;
+	uint32_t numHandlesNet = htonl(numHandles);
+
+	// Send the number of handles
+	sendPDU(clientSocket, (uint8_t *)&numHandlesNet, 4, LIST_RESP);
+
+	// Send each individual handle
+	for (int i = 0; i < handleTable.size; i++)
+	{
+		uint8_t handleLen = strlen(handleTable.entries[i].handle);
+		// Calculate the total size of the PDU: handle length + handle
+		int pduSize = 1 + handleLen;
+
+		// Create the buffer to hold the PDU
+		uint8_t pduBuffer[pduSize];
+		pduBuffer[0] = handleLen; // First byte is the length of the handle
+		strncpy((char *)pduBuffer + 1, handleTable.entries[i].handle, handleLen);
+
+		// Send the handle PDU
+		sendPDU(clientSocket, pduBuffer, pduSize, LIST_HANDLE);
+	}
+
+	// Send the end of list PDU
+	sendPDU(clientSocket, NULL, 0, LIST_END);
+
+}
+
+void processExit(int clientSocket)
+{
+	// Send exit ack
+	sendPDU(clientSocket, NULL, 0, EXIT_ACK);
 	
-	//now get the data from the client_socket
-	// if ((messageLen = safeRecv(clientSocket, dataBuffer, MAXBUF, 0)) < 0)
-	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAXBUF)) < 0)	// Test my recvPDU
+	// Remove client from handle table
+	removeHandle(&handleTable, clientSocket);
+	removeFromPollSet(clientSocket);
+	close(clientSocket);
+}
+
+void processClient(int clientSocket)
+{
+	uint8_t dataBuffer[MAX_INPUT];
+	int messageLen = 0;
+	int pduFlag;
+
+	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAX_INPUT, &pduFlag)) < 0)
 	{
 		perror("recv call");
 		exit(-1);
 	}
-
 	if (messageLen > 0)
 	{
-		printf("Message received, length: %d Data: %s\n", messageLen, dataBuffer);
+		switch (pduFlag)
+		{
+			case CONNECT:
+				// Process new client
+				processNewClient(clientSocket, dataBuffer);
+				break;
+			case BROADCAST:
+				// Broadcast message
+				processBroadcast(clientSocket, dataBuffer, messageLen);
+				break;
+			case MESSAGE:
+				// Direct message
+				processDirectMessage(clientSocket, dataBuffer, messageLen);
+				break;
+			case MULTICAST:
+				// Multicast message
+				processDirectMessage(clientSocket, dataBuffer, messageLen);
+				break;
+			case EXIT: 
+				// Close connection
+				processExit(clientSocket);
+				break;
+			case LIST_REQ: 
+				// List clients
+				processList(clientSocket);
+				break;
+			default:
+				printf("Unknown message on socket %d, length %d, with flag %d\n", clientSocket, messageLen, pduFlag);
+		}
+	} else {
+		processExit(clientSocket);
 	}
-	else
+}
+
+void serverControl(int mainServerSocket)
+{
+	int socket;
+	setupPollSet();
+	addToPollSet(mainServerSocket);
+	while(1)
 	{
-		printf("Connection closed by other side\n");
+		socket = pollCall(-1);
+		if (socket == mainServerSocket)
+		{
+			// Accept new client
+			addNewSocket(socket);
+		} else {
+			// Process client
+			processClient(socket);
+		}
 	}
 }
 
