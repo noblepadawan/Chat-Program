@@ -24,27 +24,27 @@ make cclient
 ./cclient <handle-name> <host-name> <port-number>
 ```
 
-## Client Commands
+### Client Commands
 1. Send a message to a different client on the server
 ```
     $: %M <destination-handle> [message]
 ```
----
+
 2. Send a multicast message to multiple clients on the server
 ```
     $: %C <numnber-of-handles> <destination-handle> <destination-handle> [destination-handle][message]
 ```
----
+
 3. Send a broadcast message to all clients on the server
 ```
     $: %B [message]
 ```
----
+
 4. List all the clients currently connected to the server
 ```
     $: %L
 ```
----
+
 5. Disconnect from the server
 ```
     $: %E
