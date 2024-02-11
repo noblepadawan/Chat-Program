@@ -34,6 +34,7 @@ int buildConnectPDU(uint8_t * sendBuf);
 void serverConnectResponse(int socketNum);
 int checkValidInput(uint8_t* input);
 void sendList(int clientSocket);
+void sendExit(int clientSocket);
 void processInput(int clientSocket);
 void processMessageFromServer(int clientSocket);
 void handleMessage(uint8_t * recvBuf, int receiveLen);

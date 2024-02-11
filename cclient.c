@@ -24,6 +24,7 @@ int main(int argc, char * argv[])
 
 int setup(int argc, char * argv[])
 {	
+	int i;
 	checkArgs(argc, argv);
 
 	strncpy(clientHandle, argv[1], MAX_INPUT);
@@ -39,7 +40,7 @@ int setup(int argc, char * argv[])
 		fprintf(stderr, "Invalid handle, handle starts with a number\n");
 		exit(-1);
 	}
-	for (int i = 0; i < strlen(clientHandle); i++)
+	for (i = 0; i < strlen(clientHandle); i++)
 	{
 		if(!isalnum(clientHandle[i]))
 		{
@@ -54,7 +55,7 @@ int setup(int argc, char * argv[])
 	// Send connection request to server
 	uint8_t sendBuf[MAX_INPUT];
 	int sendLen = buildConnectPDU(sendBuf);
-	sendPDU(socketNum, sendBuf, sendLen, CONNECT);
+	sendPDU(socketNum, sendBuf, sendLen);
 
 	// Wait for connection response from server
 	serverConnectResponse(socketNum);
@@ -90,9 +91,10 @@ int buildConnectPDU(uint8_t * sendBuf)
 {
 	// Build the connect PDU
 	memset(sendBuf, 0, MAX_INPUT);
-	sendBuf[0] = clientLen;
-	memcpy(sendBuf + 1, clientHandle, clientLen);
-	return clientLen + 1;
+	sendBuf[0] = CONNECT;
+	sendBuf[1] = clientLen;
+	memcpy(sendBuf + 2, clientHandle, clientLen);
+	return clientLen + 2;
 }
 
 void serverConnectResponse(int socketNum)
@@ -100,11 +102,12 @@ void serverConnectResponse(int socketNum)
 	char recvBuf[MAX_INPUT];
 	int receiveLen = 0;
 	int pduFlag;
-	if ((receiveLen = recvPDU(socketNum, (uint8_t *)recvBuf, MAX_INPUT, &pduFlag)) < 0)
+	if ((receiveLen = recvPDU(socketNum, (uint8_t *)recvBuf, MAX_INPUT)) < 0)
 	{
 		perror("recv call");
 		exit(-1);
 	}
+	pduFlag = recvBuf[0];
 	if (pduFlag == CONNECT_ACK)
 	{
 		return;
@@ -144,13 +147,14 @@ void processMessageFromServer(int clientSocket)
 	char recvBuf[MAX_INPUT] = {0};
 	int receiveLen = 0;
 	int pduFlag = 0;
-	if ((receiveLen = recvPDU(clientSocket, (uint8_t *) recvBuf, MAX_INPUT, &pduFlag)) < 0)
+	if ((receiveLen = recvPDU(clientSocket, (uint8_t *) recvBuf, MAX_INPUT)) < 0)
 	{
 		perror("recv call");
 		exit(-1);
 	}
 	if (receiveLen >= 0)
 	{
+		pduFlag = recvBuf[0];
 		switch (pduFlag)
 		{
 			case MESSAGE:
@@ -191,7 +195,7 @@ void handleList(uint8_t * recvBuf, int receiveLen, int clientSocket)
 {
 	// Get total number handles from server
 	int numHandles;
-	memcpy(&numHandles, recvBuf, 4);
+	memcpy(&numHandles, recvBuf + 1, 4);
 	numHandles = ntohl(numHandles);
 	printf("\nNumber of clients: %d\n", numHandles);
 
@@ -200,7 +204,7 @@ void handleList(uint8_t * recvBuf, int receiveLen, int clientSocket)
 
 	while(pduFlag != LIST_END)
 	{
-		if ((receiveLen = recvPDU(clientSocket, (uint8_t *) handlebuf, MAX_INPUT, &pduFlag)) < 0)
+		if ((receiveLen = recvPDU(clientSocket, (uint8_t *) handlebuf, MAX_INPUT)) < 0)
 		{
 			perror("recv call");
 			exit(-1);
@@ -208,15 +212,16 @@ void handleList(uint8_t * recvBuf, int receiveLen, int clientSocket)
 		// receiveLen = receiveLen - 3;
 		if (receiveLen >= 0)
 		{
+			pduFlag = handlebuf[0];
 			if (pduFlag == LIST_END)
 			{
 				return;
 			}
 			if (pduFlag == LIST_HANDLE)
 			{
-				int handleLen = handlebuf[0];
+				int handleLen = handlebuf[1];
 				char handle[MAX_HANDLER];
-				memcpy(handle, handlebuf + 1, handleLen);
+				memcpy(handle, handlebuf + 2, handleLen);
 				handle[handleLen] = '\0';
 				printf("\t%s\n", handle);
 			}
@@ -230,16 +235,16 @@ void handleList(uint8_t * recvBuf, int receiveLen, int clientSocket)
 void handleBroadcast(uint8_t * recvBuf, int receiveLen)
 {
 	// Format: senderHandleLength + senderHandle + message
-	int senderHandleLen = recvBuf[0];
+	int senderHandleLen = recvBuf[1];
 	char senderHandle[MAX_HANDLER] = {0};
 	char message[MAX_MESSAGE] = {0};
-	int offset = senderHandleLen + 1;
+	int offset = senderHandleLen + 2;
 
 	// Get the sender handle
-	memcpy(senderHandle, recvBuf + 1, senderHandleLen);
+	memcpy(senderHandle, recvBuf + 2, senderHandleLen);
 
 	// Get the message
-	memcpy(message, recvBuf + offset, receiveLen - offset);
+	memcpy(message, recvBuf + offset , receiveLen - offset);
 
 	printf("\n%s: %s\n", senderHandle, message);
 }
@@ -247,13 +252,13 @@ void handleBroadcast(uint8_t * recvBuf, int receiveLen)
 void handleMessage(uint8_t * recvBuf, int receiveLen)
 {
 	// Format: senderHandleLength + senderHandle + numOfDestinations + destinationHandleLength + destinationHandle + message
-	int senderHandleLen = recvBuf[0];
+	int senderHandleLen = recvBuf[1];
 	char senderHandle[MAX_HANDLER] = {0};
 	char message[MAX_MESSAGE] = {0};
-	int offset = senderHandleLen + 2;
+	int offset = senderHandleLen + 3;
 
 	// Get the sender handle
-	memcpy(senderHandle, recvBuf + 1, senderHandleLen);
+	memcpy(senderHandle, recvBuf + 2, senderHandleLen);
 
 	// Move the offset to the start of the message
 	offset += recvBuf[offset] + 1;
@@ -273,6 +278,7 @@ int splitMessage(char * userMessage, char messages[MAX_PACKETS][MAX_MESSAGE])
 	// Return the number of packets
 	int numPackets = 0;
 	int messageLen = strlen(userMessage);
+	int i;
 
 	// Ensure there is at least one character in the message
     if (messageLen == 0) {
@@ -283,7 +289,7 @@ int splitMessage(char * userMessage, char messages[MAX_PACKETS][MAX_MESSAGE])
     numPackets = (messageLen + MAX_MESSAGE - 1) / MAX_MESSAGE;
 
     // Split the message into packets
-    for (int i = 0; i < numPackets; i++) {
+    for (i = 0; i < numPackets; i++) {
         strncpy(messages[i], userMessage + i * MAX_MESSAGE, MAX_MESSAGE - 1);
         messages[i][MAX_MESSAGE - 1] = '\0';  // Null-terminate each packet
     }
@@ -316,17 +322,18 @@ void sendMessage(int clientSocket, uint8_t * input, int sendLen)
 	numPackets = splitMessage(userMessage, messages);
 
 	// Iterate through the packets and send each one
-	for (int i = 0; i < numPackets; i++) {
-    	// Format the data to send as senderHandleLength + senderHandle + numOfDestinations + destinationHandleLength + destinationHandle + message
-    	sendBuf[0] = clientLen;                                             			// Sender handle length
-    	memcpy(sendBuf + 1, clientHandle, clientLen);                       			// Sender handle
-    	sendBuf[clientLen + 1] = 1;                                          			// Number of destinations
-    	sendBuf[clientLen + 2] = handleLen;                                  			// Destination handle length
-    	memcpy(sendBuf + clientLen + 3, destHandle, handleLen);             			// Destination handle
-    	strncpy((char *)(sendBuf + clientLen + 3 + handleLen), messages[i], MAX_MESSAGE - 1);  	// Message packet
+	for (i = 0; i < numPackets; i++) {
+    	// Format the data to send as flag + senderHandleLength + senderHandle + numOfDestinations + destinationHandleLength + destinationHandle + message
+    	sendBuf[0] = MESSAGE;											 				// Flag
+		sendBuf[1] = clientLen;                                             			// Sender handle length
+    	memcpy(sendBuf + 2, clientHandle, clientLen);                       			// Sender handle
+    	sendBuf[clientLen + 2] = 1;                                          			// Number of destinations
+    	sendBuf[clientLen + 3] = handleLen;                                  			// Destination handle length
+    	memcpy(sendBuf + clientLen + 4, destHandle, handleLen);             			// Destination handle
+    	strncpy((char *)(sendBuf + clientLen + 4 + handleLen), messages[i], MAX_MESSAGE - 1);  	// Message packet
 
     	// Send the message packet to the server
-    	sendPDU(clientSocket, sendBuf, clientLen + 3 + handleLen + strlen(messages[i]), MESSAGE);
+    	sendPDU(clientSocket, sendBuf, clientLen + 4 + handleLen + strlen(messages[i]));
 	}
 
 }
@@ -342,6 +349,7 @@ void sendMulticast(int clientSocket, uint8_t * input, int sendLen)
 	int handleCount;
 	int i = 5, j = 0, k = 0;
 	char destHandles[9][MAX_HANDLER] = {0};
+	int packetIndex;
 
 	// Get the number of destinations
 	numOfHandles = input[3] - '0';
@@ -372,19 +380,21 @@ void sendMulticast(int clientSocket, uint8_t * input, int sendLen)
 	numPackets = splitMessage(userMessage, messages);
 
 	// Iterate through the destination handles and send the message to each one
-	for (handleCount = 0; handleCount < numOfHandles; handleCount++) {
-		for (int packetIndex = 0; packetIndex < numPackets; packetIndex++) {
-			// Format the data to send as senderHandleLength + senderHandle + numOfDestinations + destinationHandleLength + destinationHandle + message
-			sendBuf[0] = clientLen;                                         									// Sender handle length
-			memcpy(sendBuf + 1, clientHandle, clientLen);                   									// Sender handle
-			sendBuf[clientLen + 1] = numOfHandles;                            									// Number of destinations
+	for (handleCount = 0; handleCount < numOfHandles; handleCount++) 
+	{
+		for (packetIndex = 0; packetIndex < numPackets; packetIndex++) {
+			// Format the data to send as flag + senderHandleLength + senderHandle + numOfDestinations + destinationHandleLength + destinationHandle + message
+			sendBuf[0] = MULTICAST;                                         									// Flag
+			sendBuf[1] = clientLen;                                         									// Sender handle length
+			memcpy(sendBuf + 2, clientHandle, clientLen);                   									// Sender handle
+			sendBuf[clientLen + 2] = numOfHandles;                            									// Number of destinations
 			handleLen = strlen(destHandles[handleCount]);
-			sendBuf[clientLen + 2] = handleLen;                             									// Destination handle length
-			memcpy(sendBuf + clientLen + 3, destHandles[handleCount], handleLen);         						// Destination handle
-			strncpy((char *)(sendBuf + clientLen + 3 + handleLen), messages[packetIndex], MAX_MESSAGE - 1);  	// Message packet
+			sendBuf[clientLen + 3] = handleLen;                             									// Destination handle length
+			memcpy(sendBuf + clientLen + 4, destHandles[handleCount], handleLen);         						// Destination handle
+			strncpy((char *)(sendBuf + clientLen + 4 + handleLen), messages[packetIndex], MAX_MESSAGE - 1);  	// Message packet
 
 			// Send the message packet to the server
-			sendPDU(clientSocket, sendBuf, clientLen + 3 + handleLen + strlen(messages[packetIndex]), MULTICAST);
+			sendPDU(clientSocket, sendBuf, clientLen + 4 + handleLen + strlen(messages[packetIndex]));
 		}
 	}
 }
@@ -393,9 +403,16 @@ void sendList(int clientSocket)
 {
 	// Send list request to server
 	char sendBuf[MAX_INPUT] = {0};
-	sendBuf[0] = clientLen;
-	memcpy(sendBuf + 1, clientHandle, clientLen);
-	sendPDU(clientSocket, (uint8_t *)sendBuf, clientLen + 1, LIST_REQ);
+	sendBuf[0] = LIST_REQ;
+	sendPDU(clientSocket, (uint8_t *)sendBuf, 1);
+}
+
+void sendExit(int clientSocket)
+{
+	// Send list request to server
+	char sendBuf[MAX_INPUT] = {0};
+	sendBuf[0] = EXIT;
+	sendPDU(clientSocket, (uint8_t *)sendBuf, 1);
 }
 
 void sendBroadcast(int clientSocket, uint8_t * input, int sendLen)
@@ -403,10 +420,11 @@ void sendBroadcast(int clientSocket, uint8_t * input, int sendLen)
 	// Send broadcast to server
 	uint8_t sendBuf[MAX_INPUT] = {0};
 
-	sendBuf[0] = clientLen;
-	memcpy(sendBuf + 1, clientHandle, clientLen);
-	strncpy((char *)(sendBuf + clientLen + 1), (char *)(input + 3), sendLen - 3);
-	sendPDU(clientSocket, sendBuf, clientLen + sendLen - 3, BROADCAST);
+	sendBuf[0] = BROADCAST;
+	sendBuf[1] = clientLen;
+	memcpy(sendBuf + 2, clientHandle, clientLen);
+	strncpy((char *)(sendBuf + clientLen + 2), (char *)(input + 3), sendLen - 3);
+	sendPDU(clientSocket, sendBuf, 1 + clientLen + sendLen - 3);
 
 }
 
@@ -448,7 +466,7 @@ void processInput(int clientSocket)
 			break;
 		case 'e':
 			// Exit
-			sendPDU(clientSocket, NULL, 0, EXIT);
+			sendExit(clientSocket);
 			break;
 		default:
 			// Invalid command

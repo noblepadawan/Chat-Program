@@ -13,5 +13,5 @@
 #include <netdb.h>
 #include <stdint.h>
 
-int sendPDU(int clientSocket, uint8_t *dataBuffer, int lengthOfData, int pduFlag);
-int recvPDU(int clientSocket, uint8_t *dataBuffer, int bufferSize, int *pduFlag);
+int sendPDU(int clientSocket, uint8_t *dataBuffer, int lengthOfData);
+int recvPDU(int clientSocket, uint8_t *dataBuffer, int bufferSize);

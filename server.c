@@ -44,16 +44,17 @@ void processNewClient(int clientSocket, uint8_t *dataBuffer)
 {
 	// Add new client to handle table
 	char handle[MAX_HANDLER] = {0};
-	int handleLen = dataBuffer[0];
-	strncpy(handle, (char *)dataBuffer + 1, handleLen);
+	int handleLen = dataBuffer[1];
+	strncpy(handle, (char *)dataBuffer + 2, handleLen);
 	handle[handleLen] = '\0';
 
 	if (addHandle(&handleTable, clientSocket, handle) < 0)
 	{
 		// Handle already in use
 		char errorMessage[MAX_INPUT] = {0};
-		sprintf(errorMessage, "Handle already in use: %s", handle); 
-		sendPDU(clientSocket, (uint8_t *)errorMessage, MAX_INPUT, CONNECT_ERR);
+		errorMessage[0] = CONNECT_ERR;
+		sprintf(errorMessage + 1, "Handle already in use: %s", handle);
+		sendPDU(clientSocket, (uint8_t *)errorMessage, MAX_INPUT);
 		
 		// Close connection
 		removeFromPollSet(clientSocket);
@@ -61,18 +62,21 @@ void processNewClient(int clientSocket, uint8_t *dataBuffer)
 
 	} else {
 		// Handle added
-		sendPDU(clientSocket, NULL, 0, CONNECT_ACK);
+		char acceptMessage[MAX_INPUT] = {0};
+		acceptMessage[0] = CONNECT_ACK;
+		sendPDU(clientSocket, (uint8_t *)acceptMessage, 1);
 	}
 }
 
 void processBroadcast(int clientSocket, uint8_t *dataBuffer, int messageLen)
 {
 	// Send message to all clients except the sender
-	for (int i = 0; i < handleTable.size; i++)
+	int i;
+	for (i = 0; i < handleTable.size; i++)
 	{
 		if (handleTable.entries[i].socket != clientSocket)
 		{
-			sendPDU(handleTable.entries[i].socket, dataBuffer, messageLen, BROADCAST);
+			sendPDU(handleTable.entries[i].socket, dataBuffer, messageLen);
 		}
 	}
 }
@@ -84,7 +88,7 @@ void processDirectMessage(int clientSocket, uint8_t *dataBuffer, int messageLen)
 
 	char destHandle[MAX_HANDLER];
 	int destHandleLen;
-	int offset = 2 + dataBuffer[0];
+	int offset = 3 + dataBuffer[1];
 
 	destHandleLen = dataBuffer[offset];
 	offset++;
@@ -96,13 +100,13 @@ void processDirectMessage(int clientSocket, uint8_t *dataBuffer, int messageLen)
 	if (destSocket == -1)
 	{
 		// Handle not found
-		char error[MAX_INPUT] = {0};
-		error[0] = strlen(destHandle);	// Length of handle
-		sprintf(error + 1, "Client with handle %s does not exist", destHandle);	// Error message
-		sendPDU(clientSocket, (uint8_t *)error, MAX_INPUT, ERROR);
+		char errorMessage[MAX_INPUT] = {0};
+		errorMessage[0] = ERROR;
+		sprintf(errorMessage + 1, "Client with handle %s does not exist", destHandle);	// Error message
+		sendPDU(clientSocket, (uint8_t *)errorMessage, MAX_INPUT);
 	} else {
 		// Handle found
-		sendPDU(destSocket, dataBuffer, messageLen, MESSAGE);
+		sendPDU(destSocket, dataBuffer, messageLen);
 	}
 }
 
@@ -111,35 +115,45 @@ void processList(int clientSocket)
 	// Get the number of handles
 	uint32_t numHandles = handleTable.size;
 	uint32_t numHandlesNet = htonl(numHandles);
+	uint8_t sendBuffer[MAX_INPUT] = {0};
+	int i;
+
+	// Copy the number of handles to the send buffer
+	sendBuffer[0] = LIST_RESP;
+	memcpy(sendBuffer + 1, &numHandlesNet, 4);
 
 	// Send the number of handles
-	sendPDU(clientSocket, (uint8_t *)&numHandlesNet, 4, LIST_RESP);
+	sendPDU(clientSocket, sendBuffer, MAX_INPUT);
 
 	// Send each individual handle
-	for (int i = 0; i < handleTable.size; i++)
+	for (i = 0; i < handleTable.size; i++)
 	{
 		uint8_t handleLen = strlen(handleTable.entries[i].handle);
-		// Calculate the total size of the PDU: handle length + handle
-		int pduSize = 1 + handleLen;
+		// Calculate the total size of the PDU: flag + handle length + handle
+		int pduSize = 2 + handleLen;
 
 		// Create the buffer to hold the PDU
 		uint8_t pduBuffer[pduSize];
-		pduBuffer[0] = handleLen; // First byte is the length of the handle
-		strncpy((char *)pduBuffer + 1, handleTable.entries[i].handle, handleLen);
-
+		pduBuffer[0] = LIST_HANDLE;
+		pduBuffer[1] = handleLen; // First byte is the length of the handle
+		memcpy(pduBuffer + 2, handleTable.entries[i].handle, handleLen); // Copy the handle to the buffer
+		
 		// Send the handle PDU
-		sendPDU(clientSocket, pduBuffer, pduSize, LIST_HANDLE);
+		sendPDU(clientSocket, pduBuffer, pduSize);
 	}
 
 	// Send the end of list PDU
-	sendPDU(clientSocket, NULL, 0, LIST_END);
+	memset(sendBuffer, 0, MAX_INPUT);
+	sendBuffer[0] = LIST_END;
+	sendPDU(clientSocket, sendBuffer, 4);
 
 }
 
 void processExit(int clientSocket)
 {
+	char sendBuffer[1] = {EXIT_ACK};
 	// Send exit ack
-	sendPDU(clientSocket, NULL, 0, EXIT_ACK);
+	sendPDU(clientSocket, (uint8_t *)sendBuffer, 1);
 	
 	// Remove client from handle table
 	removeHandle(&handleTable, clientSocket);
@@ -153,13 +167,14 @@ void processClient(int clientSocket)
 	int messageLen = 0;
 	int pduFlag;
 
-	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAX_INPUT, &pduFlag)) < 0)
+	if ((messageLen = recvPDU(clientSocket, dataBuffer, MAX_INPUT)) < 0)
 	{
 		perror("recv call");
 		exit(-1);
 	}
 	if (messageLen > 0)
 	{
+		pduFlag = dataBuffer[0];
 		switch (pduFlag)
 		{
 			case CONNECT:
