@@ -2,6 +2,8 @@
 
 A chat program where clients can chat with other clients by using a TCP connection to connect to the main server which receives custom application-level PDUs from the clients and fowards them to its respective destination.
 
+---
+
 ## Server Installation
 ```
 make server
@@ -24,7 +26,7 @@ make cclient
 ./cclient <handle-name> <host-name> <port-number>
 ```
 
-### Client Commands
+## Client Commands
 1. Send a message to a different client on the server
 ```
     $: %M <destination-handle> [message]
